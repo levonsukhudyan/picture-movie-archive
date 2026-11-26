@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowUpRight, Film, Image, Search, X, LoaderCircle, Sparkles, ChevronRight } from 'lucide-react';
 
-const MOVIE_API = 'https://yts.mx/api/v2';
+const MOVIE_API = 'https://api.testingapis.com/api/Movies';
 const COMMONS_API = 'https://commons.wikimedia.org/w/api.php';
-const starters = ['Perfect Days', 'Past Lives', 'The Grand Budapest Hotel'];
+const starters = ['The Godfather', 'Spirited Away', 'Oppenheimer'];
 
 function useHashRoute() {
   const [route, setRoute] = useState(() => location.hash.replace('#/', '') || 'home');
@@ -25,22 +25,23 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
   useEffect(() => {
-    setSelected(null); setItems([]); setQuery(''); setSubmitted(''); setError(''); setPage(1);
+    setSelected(null); setItems([]); setQuery(''); setSubmitted(''); setError(''); setPage(1); setTotalPages(1);
     if (route === 'movies' || route === 'pictures') setMode(route);
   }, [route]);
 
   useEffect(() => {
-    if (!selected || mode !== 'movies' || selected.description_full || selected.cast) return;
+    if (!selected || mode !== 'movies' || selected.detailsLoaded) return;
     const controller = new AbortController();
     async function loadMovie() {
       setLoading(true); setError('');
       try {
-        const response = await fetch(`${MOVIE_API}/movie_details.json?movie_id=${selected.id}&with_images=true&with_cast=true`, { signal: controller.signal });
-        const json = await response.json();
-        if (json.status !== 'ok') throw new Error('Could not load this film.');
-        setSelected(current => current?.id === selected.id ? { ...current, ...json.data.movie } : current);
+        const response = await fetch(`${MOVIE_API}/${selected.id}`, { signal: controller.signal });
+        if (!response.ok) throw new Error('Could not load this film.');
+        const movie = await response.json();
+        setSelected(current => current?.id === selected.id ? { ...current, ...movie, detailsLoaded: true } : current);
       } catch (e) {
         if (e.name !== 'AbortError') setError(e.message || 'Could not load this film.');
       } finally { if (!controller.signal.aborted) setLoading(false); }
@@ -56,16 +57,16 @@ function App() {
       setLoading(true); setError('');
       try {
         if (mode === 'movies') {
-          const url = new URL(`${MOVIE_API}/list_movies.json`);
-          url.searchParams.set('query_term', submitted);
-          url.searchParams.set('limit', '20');
+          const url = new URL(MOVIE_API);
+          url.searchParams.set('q', submitted);
+          url.searchParams.set('limit', '8');
           url.searchParams.set('page', String(page));
-          url.searchParams.set('sort_by', 'download_count');
+          url.searchParams.set('sort', 'rating');
+          url.searchParams.set('order', 'desc');
           const response = await fetch(url, { signal: controller.signal });
           if (!response.ok) throw new Error('The movie archive could not be reached. Please try again.');
-          const json = await response.json();
-          if (json.status !== 'ok') throw new Error(json.status_message || 'Movie search failed.');
-          setItems(json.data.movies || []);
+          setItems(await response.json());
+          setTotalPages(Math.max(1, Number(response.headers.get('X-Total-Pages') || 1)));
         } else {
           const url = new URL(COMMONS_API);
           url.search = new URLSearchParams({ action: 'query', generator: 'search', gsrsearch: submitted, gsrnamespace: '6', gsrlimit: '24', prop: 'imageinfo', iiprop: 'url|extmetadata', iiurlwidth: '680', format: 'json', origin: '*' });
@@ -120,7 +121,7 @@ function App() {
           {!loading && !error && submitted && <div className="results-head"><div><span className="eyebrow">SEARCH RESULTS</span><h2>“{submitted}”</h2></div><span>{items.length} {items.length===1?'RESULT':'RESULTS'} <span className="result-dot"/></span></div>}
           {!loading && submitted && !error && items.length===0 && <div className="empty-state"><Sparkles size={22}/><h3>Nothing in this frame yet.</h3><p>Try a shorter search or a different subject.</p></div>}
           {!loading && items.length>0 && <div className={`result-grid ${mode==='pictures'?'picture-grid':''}`}>{items.map(item=><ResultCard key={item.id||item.pageid} item={item} mode={mode} onClick={()=>openItem(item)}/>)}</div>}
-          {mode==='movies'&&items.length>0&&<div className="pagination"><button onClick={()=>setPage(Math.max(1,page-1))} disabled={page===1}><ArrowLeft size={15}/> PREVIOUS</button><span>PAGE <b>{page}</b></span><button onClick={()=>setPage(page+1)}>NEXT <ChevronRight size={15}/></button></div>}
+          {mode==='movies'&&items.length>0&&totalPages>1&&<div className="pagination"><button onClick={()=>setPage(Math.max(1,page-1))} disabled={page===1}><ArrowLeft size={15}/> PREVIOUS</button><span>PAGE <b>{page}</b> OF {totalPages}</span><button onClick={()=>setPage(Math.min(totalPages,page+1))} disabled={page>=totalPages}>NEXT <ChevronRight size={15}/></button></div>}
           {!submitted&&!loading&&<div className="browse-hint"><span className="hint-mark">↳</span><p>Type a title, a place, or a half-remembered detail.<br/>The archive will take it from there.</p><span className="hint-code">PM / SEARCH-01</span></div>}
         </>}
       </section>}
@@ -130,7 +131,7 @@ function App() {
 }
 
 function ResultCard({item,mode,onClick}) {
-  const img = mode==='movies' ? item.medium_cover_image || item.large_cover_image : item.imageinfo?.[0]?.thumburl;
+  const img = mode==='movies' ? item.poster || item.medium_cover_image || item.large_cover_image : item.imageinfo?.[0]?.thumburl;
   const name = mode==='movies' ? item.title : (item.title||'Untitled photograph').replace(/^File:/,'').replace(/\.[^.]+$/,'').replaceAll('_',' ');
   const sub = mode==='movies' ? `${item.year||'—'}  ·  ★ ${Number(item.rating||0).toFixed(1)}` : 'WIKIMEDIA COMMONS';
   return <button className={`result-card ${mode==='pictures'?'photo-result':''}`} onClick={onClick}>
@@ -142,13 +143,13 @@ function ResultCard({item,mode,onClick}) {
 function Detail({item,mode,onBack}) {
   const [failed,setFailed]=useState(false);
   const movie=mode==='movies';
-  const poster=movie?(item.large_cover_image||item.medium_cover_image):item.imageinfo?.[0]?.thumburl;
+  const poster=movie?(item.poster||item.large_cover_image||item.medium_cover_image):item.imageinfo?.[0]?.thumburl;
   const title=movie?item.title:(item.title||'Untitled photograph').replace(/^File:/,'').replace(/\.[^.]+$/,'').replaceAll('_',' ');
   const ext=item.imageinfo?.[0]?.extmetadata||{};
-  const description=movie?item.description_full||item.synopsis:item.description||ext.ImageDescription?.value||'A photograph in the Wikimedia Commons public archive.';
-  const credits=movie?item.cast?.slice(0,8).map(c=>c.name).join(' · '):ext.Artist?.value?.replace(/<[^>]*>/g,'')||'Wikimedia Commons contributor';
+  const description=movie?item.description_full||item.synopsis||`${item.title} is a ${item.genres?.join(', ')||'film'} directed by ${item.director||'an unknown director'}, released in ${item.year||'an unknown year'}.`:item.description||ext.ImageDescription?.value||'A photograph in the Wikimedia Commons public archive.';
+  const credits=movie?item.cast?.slice(0,8).map(c=>typeof c==='string'?c:c.name).join(' · '):ext.Artist?.value?.replace(/<[^>]*>/g,'')||'Wikimedia Commons contributor';
   const rating=movie?Number(item.rating||0).toFixed(1):null;
-  return <article className="detail-view"><button className="detail-back" onClick={onBack}><ArrowLeft size={15}/> BACK TO RESULTS</button><div className="detail-content"><div className="detail-poster">{poster&&!failed?<img src={poster} alt={title} onError={()=>setFailed(true)}/>:<div className="poster-placeholder"><Film size={30}/></div>}</div><div className="detail-copy"><div className="eyebrow">{movie?'FEATURED FILM':'ARCHIVE IMAGE'} / {movie?item.year:'PUBLIC DOMAIN ARCHIVE'}</div><h2>{title}</h2><div className="detail-stats">{movie?<><span>★ {rating} / 10</span><span>{item.runtime||'—'} MIN</span><span>{item.language?.toUpperCase()||'FILM'}</span></>:<span>{credits}</span>}</div><p>{description?.replace(/<[^>]*>/g,' ')||'No description is available for this archive item.'}</p>{movie&&item.genres?.length>0&&<div className="genre-list">{item.genres.map(g=><span key={g}>{g}</span>)}</div>}{!movie&&<a className="source-link" href={item.imageinfo?.[0]?.descriptionurl} target="_blank" rel="noreferrer">VIEW SOURCE ON COMMONS <ArrowUpRight size={14}/></a>}<div className="detail-index">ARCHIVE REF. &nbsp; {movie?`YTS-${item.id}`:`WMC-${item.pageid}`}</div></div></div></article>;
+  return <article className="detail-view"><button className="detail-back" onClick={onBack}><ArrowLeft size={15}/> BACK TO RESULTS</button><div className="detail-content"><div className="detail-poster">{poster&&!failed?<img src={poster} alt={title} onError={()=>setFailed(true)}/>:<div className="poster-placeholder"><Film size={30}/></div>}</div><div className="detail-copy"><div className="eyebrow">{movie?'FEATURED FILM':'ARCHIVE IMAGE'} / {movie?item.year:'PUBLIC DOMAIN ARCHIVE'}</div><h2>{title}</h2><div className="detail-stats">{movie?<><span>★ {rating} / 10</span><span>{item.runtimeMinutes||'—'} MIN</span><span>{item.director||'DIRECTOR UNKNOWN'}</span></>:<span>{credits}</span>}</div><p>{description?.replace(/<[^>]*>/g,' ')||'No description is available for this archive item.'}</p>{movie&&item.genres?.length>0&&<div className="genre-list">{item.genres.map(g=><span key={g}>{g}</span>)}</div>}{movie&&credits&&<p className="cast-line"><b>CAST</b> {credits}</p>}{!movie&&<a className="source-link" href={item.imageinfo?.[0]?.descriptionurl} target="_blank" rel="noreferrer">VIEW SOURCE ON COMMONS <ArrowUpRight size={14}/></a>}<div className="detail-index">ARCHIVE REF. &nbsp; {movie?`FILM-${item.id}`:`WMC-${item.pageid}`}</div></div></div></article>;
 }
 
 export default App;

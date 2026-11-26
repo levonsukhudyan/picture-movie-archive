@@ -15,7 +15,9 @@ The repository includes a GitHub Actions workflow that builds and deploys the ap
 
 ## Public APIs
 
-- Movies: YTS API v2 (`list_movies.json` for search and pagination, `movie_details.json` for an individual movie). No API key required.
+- Movies: Testing APIs Movies (`/api/Movies` for search and pagination, `/api/Movies/{id}` for one film). No API key required. This learning API has a small sample catalog and placeholder poster images.
 - Pictures: Wikimedia Commons MediaWiki API (`generator=search` and `imageinfo` for results; Commons file page for the source). No API key required.
+
+The movie API is intended for practice projects; it has a limited sample catalog rather than a full commercial movie database. Its poster URLs are sample images.
 
 Search happens after form submission. Each request is built from the current search term and page; a React effect fetches and parses JSON, while aborting stale requests when the query changes. Results open into individual detail views.
